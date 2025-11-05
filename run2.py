@@ -3,7 +3,7 @@ from collections import defaultdict, deque
 
 
 def solve(edges: list[tuple[str, str]]) -> list[str]:
-    # строим граф из соединений
+    # строим граф
     graph = defaultdict(list)
     gateways = set()
 
@@ -11,105 +11,126 @@ def solve(edges: list[tuple[str, str]]) -> list[str]:
         graph[n1].append(n2)
         graph[n2].append(n1)
 
-        # определяем шлюзы по заглавным буквам
+        # определяем шлюзы
         if n1.isupper():
             gateways.add(n1)
         if n2.isupper():
             gateways.add(n2)
 
-    # текущая позиция вируса
     virus_pos = 'a'
     result = []
 
-    # функция для нахождения ближайшего шлюза и следующего шага вируса
-    def find_virus_move(position):
-        queue = deque([position])
-        visited = {position: None}
-        found_gateways = []
+    # функция для определения следующего шага вируса
+    def get_virus_next_move(pos):
+        # находим все ближайшие шлюзы
+        queue = deque([pos])
+        dist = {pos: 0}
+        prev = {pos: None}
+        closest_gateways = []
+        min_dist = float('inf')
 
-        while queue and not found_gateways:
-            level_size = len(queue)
-            current_level = []
+        while queue:
+            current = queue.popleft()
+            current_dist = dist[current]
 
-            for _ in range(level_size):
-                current = queue.popleft()
+            if current in gateways:
+                if current_dist < min_dist:
+                    min_dist = current_dist
+                    closest_gateways = [current]
+                elif current_dist == min_dist:
+                    closest_gateways.append(current)
+                continue
 
-                for neighbor in sorted(graph[current]):  # сортируем для детерминированности
-                    if neighbor not in visited:
-                        visited[neighbor] = current
+            if current_dist > min_dist:
+                continue
 
-                        if neighbor in gateways:
-                            found_gateways.append(neighbor)
-                        else:
-                            queue.append(neighbor)
+            for neighbor in sorted(graph[current]):
+                if neighbor not in dist:
+                    dist[neighbor] = current_dist + 1
+                    prev[neighbor] = current
+                    queue.append(neighbor)
 
-            # если на этом уровне нашли шлюзы, прекращаем поиск
-            if found_gateways:
-                break
-
-        if not found_gateways:
+        if not closest_gateways:
             return None, None
 
         # выбираем лексикографически наименьший шлюз
-        target_gateway = min(found_gateways)
+        target_gateway = min(closest_gateways)
 
-        # восстанавливаем путь к выбранному шлюзу
+        # восстанавливаем путь к шлюзу
         path = []
-        current = target_gateway
-        while current is not None:
-            path.append(current)
-            current = visited[current]
+        node = target_gateway
+        while node is not None:
+            path.append(node)
+            node = prev[node]
         path.reverse()
 
-        # следующий шаг вируса - второй элемент пути
-        if len(path) >= 2:
+        # следующий шаг - второй узел в пути
+        if len(path) > 1:
             return target_gateway, path[1]
-        else:
-            return target_gateway, None
+        return target_gateway, None
 
-    # основной игровой цикл
+    # основной цикл
     while True:
-        # 1. определяем, куда пойдет вирус
-        target_gateway, next_move = find_virus_move(virus_pos)
+        # определяем, куда пойдет вирус
+        target_gateway, next_move = get_virus_next_move(virus_pos)
 
         # если вирус не может двигаться, заканчиваем
         if next_move is None:
             break
 
-        # 2. отключаем коридор, который предотвратит достижение целевого шлюза
-        # находим все соединения с целевым шлюзом
-        gateway_connections = []
-        for neighbor in sorted(graph[target_gateway]):
-            gateway_connections.append((target_gateway, neighbor))
+        # находим все возможные отключаемые коридоры (шлюз-узел)
+        available_cuts = []
+        for gateway in sorted(gateways):
+            for neighbor in sorted(graph[gateway]):
+                available_cuts.append(f"{gateway}-{neighbor}")
 
         # сортируем по лексикографическому порядку
-        gateway_connections.sort(key=lambda x: (x[0], x[1]))
+        available_cuts.sort()
 
-        # отключаем соединение, которое находится на пути вируса к шлюзу
-        cut_found = False
+        # проверяем, можем ли мы отключить коридор на пути вируса
+        cut_made = False
 
-        for gateway, node in gateway_connections:
-            # проверяем, является ли этот узел частью пути к шлюзу
-            if node == next_move or (virus_pos == next_move and node in graph[next_move]):
-                result.append(f"{gateway}-{node}")
+        # сначала пытаемся отключить коридор, который ведет к целевому шлюзу от следующей позиции
+        potential_cut = f"{target_gateway}-{next_move}"
+        if potential_cut in available_cuts:
+            result.append(potential_cut)
+            graph[target_gateway].remove(next_move)
+            graph[next_move].remove(target_gateway)
+            cut_made = True
+        else:
+            # если не можем отключить прямой путь, ищем любой коридор, который замедлит вирус
+            for cut in available_cuts:
+                gateway, node = cut.split('-')
+
+                # временно удаляем этот коридор
                 graph[gateway].remove(node)
                 graph[node].remove(gateway)
-                cut_found = True
-                break
 
-        # если не нашли конкретное соединение на пути, отключаем первое доступное
-        if not cut_found and gateway_connections:
-            gateway, node = gateway_connections[0]
-            result.append(f"{gateway}-{node}")
+                # проверяем, изменился ли путь вируса
+                new_target, new_next = get_virus_next_move(virus_pos)
+
+                # если путь изменился или вирус заблокирован, оставляем отключение
+                if new_next != next_move or new_next is None:
+                    result.append(cut)
+                    cut_made = True
+                    break
+                else:
+                    # возвращаем коридор
+                    graph[gateway].append(node)
+                    graph[node].append(gateway)
+
+        # если не нашли подходящий отключаемый коридор, берем первый доступный
+        if not cut_made and available_cuts:
+            cut = available_cuts[0]
+            gateway, node = cut.split('-')
+            result.append(cut)
             graph[gateway].remove(node)
             graph[node].remove(gateway)
-            cut_found = True
+            cut_made = True
 
-        # 3. вирус делает ход
+        # вирус делает ход
         if next_move in graph[virus_pos]:
             virus_pos = next_move
-        else:
-            break
 
     return result
 
